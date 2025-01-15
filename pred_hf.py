@@ -78,7 +78,7 @@ def query_llm(prompt, model, tokenizer, max_len, device, temperature=0.0, max_ne
     output = tokenizer.decode(output_ids, skip_special_tokens=True)
     return output
 
-def get_pred(data, args, save_path, rank):
+def get_pred(data, args, save_path, rank, lock=None):
     """
     每个进程加载自己的模型和分词器，然后处理数据。
     """
@@ -158,8 +158,10 @@ def get_pred(data, args, save_path, rank):
             item['judge'] = item['pred'] == item.get('answer', '').strip()
             item['context'] = context[:1000]  # 保留部分上下文
 
-            fout.write(json.dumps(item, ensure_ascii=False) + '\n')
-            fout.flush()
+            if lock is not None:
+                with lock:
+                    fout.write(json.dumps(item, ensure_ascii=False) + '\n')
+                    fout.flush()
 
 def main():
     parser = argparse.ArgumentParser()
@@ -215,16 +217,17 @@ def main():
     data_subsets = [data[i::args.n_proc] for i in range(args.n_proc)]
 
     # 启动多进程
-    # processes = []
-    # for rank in range(args.n_proc):
-    #     p = mp.Process(target=get_pred, args=(data_subsets[rank], args, out_file, rank))
-    #     p.start()
-    #     processes.append(p)
+    processes = []
+    lock = mp.Lock()
+    for rank in range(args.n_proc):
+        p = mp.Process(target=get_pred, args=(data_subsets[rank], args, out_file, rank, lock))
+        p.start()
+        processes.append(p)
 
-    # for p in processes:
-    #     p.join()
+    for p in processes:
+        p.join()
 
-    get_pred(data_subsets[0], args, out_file, 0)
+    # get_pred(data_subsets[0], args, out_file, 0)
 
     print("[INFO] All processes completed.")
 
